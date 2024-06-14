@@ -18,6 +18,7 @@ package persistentvolumeclaim
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	apiv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	"github.com/cloudnative-pg/cloudnative-pg/pkg/utils"
 )
 
 // FilterByPodSpec returns all the corev1.PersistentVolumeClaim that are used inside the podSpec
@@ -225,4 +227,84 @@ func GetInstancePVCs(
 	}
 
 	return pvcs, nil
+}
+
+// GetInstanceStorageSource gets all the PVC associated with a given instance
+func GetInstanceStorageSource(
+	ctx context.Context,
+	cli client.Client,
+	instanceName string,
+	namespace string,
+) (*StorageSource, error) {
+	// getPvcList returns the PVCs matching the instance name as well as the role
+	getPvcList := func(pvcMeta Meta, instance string) (*corev1.PersistentVolumeClaimList, error) {
+		var pvcList corev1.PersistentVolumeClaimList
+		matchClusterName := client.MatchingLabels(pvcMeta.GetLabels(instance))
+		err := cli.List(ctx,
+			&pvcList,
+			client.InNamespace(namespace),
+			matchClusterName,
+		)
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &pvcList, nil
+	}
+
+	pgData, err := getPvcList(NewPgDataCalculator(), instanceName)
+	if err != nil {
+		return nil, err
+	}
+	if len(pgData.Items) != 1 {
+		return nil, fmt.Errorf("unexpected! %v PGDATA found for instance %s", len(pgData.Items), instanceName)
+	}
+
+	volumeClaimAPI := corev1.GroupName
+	source := StorageSource{
+		DataSource: corev1.TypedLocalObjectReference{
+			APIGroup: &volumeClaimAPI,
+			Kind:     "PersistentVolumeClaim",
+			Name:     pgData.Items[0].Name,
+		},
+	}
+
+	pgWal, err := getPvcList(NewPgWalCalculator(), instanceName)
+	if err != nil {
+		return nil, err
+	}
+	if pgWal != nil && len(pgWal.Items) > 1 {
+		return nil, fmt.Errorf("unexpected! %v PGWAL found for instance %s", len(pgWal.Items), instanceName)
+	}
+	if pgWal != nil && len(pgWal.Items) > 0 {
+		source.WALSource = &corev1.TypedLocalObjectReference{
+			APIGroup: &volumeClaimAPI,
+			Kind:     "PersistentVolumeClaim",
+			Name:     pgWal.Items[0].Name,
+		}
+	}
+
+	tablespacesPVClist, err := getPvcList(newTablespaceMetaCalculator(), instanceName)
+	if err != nil {
+		return nil, err
+	}
+	if tablespacesPVClist != nil && len(tablespacesPVClist.Items) > 0 {
+		for _, tablespace := range tablespacesPVClist.Items {
+			source.TablespaceSource = make(map[string]corev1.TypedLocalObjectReference)
+			name, found := tablespace.Labels[utils.TablespaceNameLabelName]
+			if !found {
+				return nil, fmt.Errorf("unexpected! %v PGTABLESPACE without name label for instance %s",
+					tablespace.Name, instanceName)
+			}
+			source.TablespaceSource[name] = corev1.TypedLocalObjectReference{
+				APIGroup: &volumeClaimAPI,
+				Kind:     "PersistentVolumeClaim",
+				Name:     tablespace.Name,
+			}
+		}
+	}
+
+	return &source, nil
 }
