@@ -28,6 +28,7 @@ import (
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/backup"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/certificate"
+	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/clone"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/destroy"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/fence"
 	"github.com/cloudnative-pg/cloudnative-pg/internal/cmd/plugin/fio"
@@ -85,6 +86,7 @@ func main() {
 	subcommands := []*cobra.Command{
 		backup.NewCmd(),
 		certificate.NewCmd(),
+		clone.NewCmd(),
 		destroy.NewCmd(),
 		fence.NewCmd(),
 		fio.NewCmd(),
